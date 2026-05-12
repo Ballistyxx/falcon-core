@@ -1,0 +1,10 @@
+(fp_lib_table
+	(version 7)
+	(lib (name "BMI270") (type "KiCad") (uri "${KIPRJMOD}/libs/BMI270") (options "") (descr ""))
+	(lib (name "BMM350") (type "KiCad") (uri "${KIPRJMOD}/libs/BMM350") (options "") (descr ""))
+	(lib (name "MICRONE") (type "KiCad") (uri "${KIPRJMOD}/libs/MICRONE") (options "") (descr ""))
+	(lib (name "DRV8213") (type "KiCad") (uri "${KIPRJMOD}/libs/DRV8213/footprints.pretty") (options "") (descr ""))
+	(lib (name "ADS7128") (type "KiCad") (uri "${KIPRJMOD}/libs/ADS7128/footprints.pretty") (options "") (descr ""))
+	(lib (name "VL53L5") (type "KiCad") (uri "${KIPRJMOD}/libs/VL53L5") (options "") (descr ""))
+  (lib (name "JLCPCB_Footprints")(type "KiCad")(uri "${KIPRJMOD}/jlcpcb_lib/JLCPCB_Footprints.pretty")(options "")(descr "JLCPCB imported footprints"))
+)
