@@ -1,0 +1,15 @@
+menu "Falcon Core Configuration"
+
+    config ESP_WIFI_SSID
+        string "WiFi SSID"
+        default "Home-TMobile5g"
+        help
+            SSID (network name) for the STA connection.
+
+    config ESP_WIFI_PASSWORD
+        string "WiFi Password"
+        default "PSU4LIFE!"
+        help
+            WPA2 password for the STA connection.
+
+endmenu

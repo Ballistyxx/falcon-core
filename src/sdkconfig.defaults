@@ -1,0 +1,29 @@
+# Target
+CONFIG_IDF_TARGET="esp32s3"
+
+# Use the built-in USB-Serial-JTAG peripheral for console and flashing
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# Flash settings – match WROOM-1 module (quad SPI, 80 MHz, 8 MB)
+CONFIG_ESPTOOLPY_FLASHMODE_DIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+
+# PSRAM – octal SPI on WROOM-1 N8R8. Required for camera frame buffers.
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+
+# WiFi credentials (STA mode)
+CONFIG_ESP_WIFI_SSID="Home-TMobile5g"
+CONFIG_ESP_WIFI_PASSWORD="PSU4LIFE!"
+
+# HTTP server – allow larger headers and enable WebSocket support
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
+CONFIG_HTTPD_WS_SUPPORT=y
+
+# Larger main task stack for subsystem init
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=6144
+
+# Single large app partition (no OTA) to fit the firmware
+CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y

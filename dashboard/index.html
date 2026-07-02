@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Falcon Core — Ground Station</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --edge: #30363d;
+    --fg: #c9d1d9; --muted: #8b949e; --accent: #58a6ff;
+    --good: #3fb950; --warn: #d29922; --bad: #f85149;
+    --mono: "JetBrains Mono", "Fira Code", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font-family: var(--mono); font-size: 13px;
+  }
+  header {
+    display: flex; align-items: center; gap: 16px;
+    padding: 10px 16px; border-bottom: 1px solid var(--edge);
+    background: var(--panel);
+  }
+  header h1 { font-size: 15px; margin: 0; letter-spacing: 2px; font-weight: 600; }
+  header h1 span { color: var(--accent); }
+  .spacer { flex: 1; }
+  .status {
+    display: flex; align-items: center; gap: 8px;
+    padding: 4px 10px; border: 1px solid var(--edge); border-radius: 4px;
+  }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+  .dot.connected { background: var(--good); box-shadow: 0 0 6px var(--good); }
+  .dot.reconnecting { background: var(--warn); box-shadow: 0 0 6px var(--warn); }
+  .dot.disconnected { background: var(--bad); }
+  input {
+    background: var(--bg); border: 1px solid var(--edge); color: var(--fg);
+    font-family: var(--mono); padding: 4px 8px; border-radius: 4px; width: 130px;
+  }
+  button {
+    background: var(--accent); border: none; color: #0d1117;
+    font-family: var(--mono); font-weight: 600; padding: 5px 12px;
+    border-radius: 4px; cursor: pointer;
+  }
+  button.ghost { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+
+  main {
+    display: grid; gap: 12px; padding: 12px;
+    grid-template-columns: 2fr 1fr;
+    grid-template-areas: "cam side" "inst side";
+  }
+  @media (max-width: 900px) {
+    main { grid-template-columns: 1fr; grid-template-areas: "cam" "inst" "side"; }
+  }
+  .panel {
+    background: var(--panel); border: 1px solid var(--edge);
+    border-radius: 6px; padding: 12px;
+  }
+  .panel h2 {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px;
+    color: var(--muted); margin: 0 0 10px; font-weight: 600;
+  }
+
+  #cam { grid-area: cam; }
+  .cam-wrap {
+    position: relative; width: 100%; background: #000;
+    border-radius: 4px; overflow: hidden; aspect-ratio: 4 / 3;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .cam-wrap img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .cam-msg { position: absolute; color: var(--muted); font-size: 13px; }
+
+  #instruments { grid-area: inst; display: grid; gap: 12px; grid-template-columns: 1fr 1fr; }
+  #side { grid-area: side; display: flex; flex-direction: column; gap: 12px; }
+
+  .compass-wrap, .attitude-wrap { display: flex; flex-direction: column; align-items: center; }
+  .heading-num { font-size: 22px; margin-top: 6px; }
+  .heading-num small { color: var(--muted); font-size: 12px; }
+
+  table.readout { width: 100%; border-collapse: collapse; }
+  table.readout td { padding: 3px 4px; }
+  table.readout td.k { color: var(--muted); }
+  table.readout td.v { text-align: right; font-variant-numeric: tabular-nums; }
+
+  .bar { height: 10px; background: var(--bg); border: 1px solid var(--edge); border-radius: 5px; overflow: hidden; }
+  .bar > span { display: block; height: 100%; width: 0%; background: var(--good); transition: width .2s, background .2s; }
+
+  .motorbar { display: grid; grid-template-columns: 64px 1fr 48px; align-items: center; gap: 8px; margin: 4px 0; }
+  .motorbar .track { position: relative; height: 12px; background: var(--bg); border: 1px solid var(--edge); border-radius: 6px; }
+  .motorbar .track .mid { position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--edge); }
+  .motorbar .track .fill { position: absolute; top: 0; bottom: 0; left: 50%; width: 0%; background: var(--accent); }
+
+  .legend kbd {
+    background: var(--bg); border: 1px solid var(--edge); border-bottom-width: 2px;
+    border-radius: 4px; padding: 1px 6px; margin-right: 4px; color: var(--fg);
+  }
+  .legend .key.active kbd { background: var(--accent); color: #0d1117; }
+  .legend div { margin: 5px 0; }
+  .stale { color: var(--bad); font-weight: 600; }
+
+  .modal-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,.65);
+    display: flex; align-items: center; justify-content: center; z-index: 100;
+  }
+  .modal {
+    background: var(--panel); border: 1px solid var(--edge); border-radius: 8px;
+    padding: 20px; width: min(540px, 92vw); max-height: 90vh; overflow: auto;
+  }
+  .modal h2 {
+    font-size: 13px; text-transform: uppercase; letter-spacing: 1.5px;
+    color: var(--fg); margin: 0 0 12px; font-weight: 600;
+  }
+  .modal h3 { font-size: 12px; color: var(--accent); margin: 14px 0 6px; }
+  .modal p, .modal li { line-height: 1.6; color: var(--fg); }
+  .modal ol { margin: 6px 0 6px 18px; padding: 0; }
+  .modal .muted { color: var(--muted); }
+  .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; }
+  .cal-grid {
+    display: grid; grid-template-columns: auto repeat(3, 1fr); gap: 4px 10px;
+    font-variant-numeric: tabular-nums; margin-top: 6px;
+  }
+  .cal-grid .h { color: var(--muted); }
+  .cal-grid .lbl { color: var(--muted); }
+  .cal-count { font-size: 20px; color: var(--accent); }
+
+  .tof-wrap { display: flex; flex-direction: column; gap: 10px; }
+  .tof-svg { width: 100%; height: auto; display: block; border-radius: 6px; }
+  .tof-cell { transition: fill .18s ease; }
+  .tof-txt {
+    font-family: var(--mono); font-size: 13px; font-weight: 600;
+    pointer-events: none; dominant-baseline: central; text-anchor: middle;
+  }
+  .tof-legend { display: flex; align-items: center; gap: 8px; }
+  .tof-legend .grad { flex: 1; height: 10px; border-radius: 5px; border: 1px solid var(--edge); }
+  .tof-legend span { color: var(--muted); font-size: 11px; white-space: nowrap; }
+  .tof-stats { display: flex; justify-content: space-between; gap: 8px; }
+  .tof-stats span { color: var(--muted); font-size: 11px; }
+  .tof-stats b { color: var(--fg); font-variant-numeric: tabular-nums; font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>FALCON<span>//</span>CORE</h1>
+  <input id="ip" placeholder="blimp IP" />
+  <button id="connectBtn">Connect</button>
+  <div class="spacer"></div>
+  <div class="status">
+    <div id="dot" class="dot disconnected"></div>
+    <span id="statusText">disconnected</span>
+  </div>
+</header>
+
+<main>
+  <section class="panel" id="cam">
+    <h2>Camera Feed</h2>
+    <div class="cam-wrap">
+      <img id="stream" alt="" />
+      <div class="cam-msg" id="camMsg">no video</div>
+    </div>
+    <div style="margin-top:8px"><button class="ghost" id="reloadCam">Reload Stream</button></div>
+  </section>
+
+  <section class="panel" id="instruments">
+    <div class="compass-wrap" style="grid-column: 1 / 2;">
+      <h2 style="align-self:flex-start">Compass</h2>
+      <svg id="compass" width="170" height="170" viewBox="0 0 200 200"></svg>
+      <div class="heading-num"><span id="headingVal">---</span>°<small id="headingCard"></small></div>
+    </div>
+    <div class="attitude-wrap" style="grid-column: 2 / 3;">
+      <h2 style="align-self:flex-start">Attitude</h2>
+      <svg id="adi" width="170" height="170" viewBox="0 0 200 200"></svg>
+      <div class="heading-num" style="font-size:13px">
+        <span id="rollVal">0.0</span>° roll&nbsp;&nbsp;<span id="pitchVal">0.0</span>° pitch
+      </div>
+    </div>
+  </section>
+
+  <aside id="side">
+    <section class="panel">
+      <h2>Power &amp; Altitude</h2>
+      <table class="readout">
+        <tr><td class="k">Battery</td><td class="v"><span id="vVal">--</span> V / <span id="pctVal">--</span>%</td></tr>
+      </table>
+      <div class="bar" style="margin:6px 0"><span id="battBar"></span></div>
+      <table class="readout">
+        <tr><td class="k">Altitude (ToF)</td><td class="v"><span id="altVal">--</span> mm</td></tr>
+        <tr><td class="k">WiFi (RSSI)</td><td class="v"><span id="rssiVal">--</span></td></tr>
+      </table>
+    </section>
+
+    <section class="panel">
+      <h2>ToF Depth Field — 4×4 (cm)</h2>
+      <div class="tof-wrap">
+        <svg id="tofGrid" class="tof-svg" viewBox="0 0 200 200"></svg>
+        <div class="tof-legend">
+          <span id="tofNear">near</span>
+          <div class="grad" id="tofGrad"></div>
+          <span id="tofFar">far</span>
+        </div>
+        <div class="tof-stats">
+          <span>nearest <b id="tofMin">--</b></span>
+          <span>center <b id="tofCtr">--</b></span>
+          <span>farthest <b id="tofMax">--</b></span>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Raw Sensors</h2>
+      <table class="readout">
+        <tr><td class="k">accel x/y/z</td><td class="v" id="accVal">--</td></tr>
+        <tr><td class="k">gyro x/y/z</td><td class="v" id="gyrVal">--</td></tr>
+        <tr><td class="k">mag x/y/z</td><td class="v" id="magVal">--</td></tr>
+      </table>
+    </section>
+
+    <section class="panel">
+      <h2>Mag Calibration</h2>
+      <table class="readout">
+        <tr><td class="k">offset x/y/z</td><td class="v" id="calOff">--</td></tr>
+        <tr><td class="k">scale x/y/z</td><td class="v" id="calScl">--</td></tr>
+      </table>
+      <div style="margin-top:8px"><button class="ghost" id="calBtn">Calibrate…</button></div>
+    </section>
+
+    <section class="panel">
+      <h2>Motor Outputs</h2>
+      <div id="motors"></div>
+    </section>
+
+    <section class="panel legend">
+      <h2>Controls</h2>
+      <div class="key" data-k="w"><kbd>W</kbd> forward</div>
+      <div class="key" data-k="s"><kbd>S</kbd> backward</div>
+      <div class="key" data-k="a"><kbd>A</kbd> yaw left</div>
+      <div class="key" data-k="d"><kbd>D</kbd> yaw right</div>
+      <div class="key" data-k="e"><kbd>E</kbd> ascend</div>
+      <div class="key" data-k="q"><kbd>Q</kbd> descend</div>
+      <div id="staleMsg"></div>
+    </section>
+  </aside>
+</main>
+
+<div id="calModal" class="modal-backdrop" style="display:none">
+  <div class="modal">
+    <h2>Magnetometer Calibration</h2>
+
+    <div id="calIntro">
+      <p>This corrects two distortions in the compass:</p>
+      <h3>Hard-iron (offset)</h3>
+      <p class="muted">A fixed magnetic bias from nearby steel/magnets that shifts
+        every reading. Removed by centering the sampled sphere (offset = midpoint
+        of each axis' min/max).</p>
+      <h3>Soft-iron (scale)</h3>
+      <p class="muted">Ferrous material warps the sphere into an ellipsoid. Removed
+        by rescaling each axis to a common radius (per-axis gain).</p>
+      <h3>How to collect data</h3>
+      <ol>
+        <li>Keep the blimp <b>well away</b> from laptops, phones, motors and desks
+          with steel frames.</li>
+        <li>Click <b>Start Collecting</b>.</li>
+        <li>Slowly rotate the airframe through <b>every orientation</b>: full
+          turns about all three axes and a few figure-8 motions, so the sensor
+          sees the whole sphere. Aim for ~500+ samples over 20–30&nbsp;s.</li>
+        <li>Click <b>Finish &amp; Compute</b>, review the result, then
+          <b>Save to Device</b>.</li>
+      </ol>
+      <p class="muted">The device streams <i>raw</i> magnetometer data, so you can
+        recalibrate any time.</p>
+    </div>
+
+    <div id="calCollecting" style="display:none">
+      <p>Rotate through all orientations…</p>
+      <p>Samples: <span class="cal-count" id="calCount">0</span></p>
+      <div class="cal-grid">
+        <span class="h"></span><span class="h">X</span><span class="h">Y</span><span class="h">Z</span>
+        <span class="lbl">min</span><span id="calMinX">–</span><span id="calMinY">–</span><span id="calMinZ">–</span>
+        <span class="lbl">max</span><span id="calMaxX">–</span><span id="calMaxY">–</span><span id="calMaxZ">–</span>
+        <span class="lbl">range</span><span id="calRngX">–</span><span id="calRngY">–</span><span id="calRngZ">–</span>
+      </div>
+      <p class="muted" id="calHint" style="margin-top:10px">Collect at least ~200
+        samples with good spread on all three axes for a usable fit.</p>
+    </div>
+
+    <div id="calDone" style="display:none">
+      <p>Computed from <span id="calDoneN">0</span> samples:</p>
+      <div class="cal-grid">
+        <span class="h"></span><span class="h">X</span><span class="h">Y</span><span class="h">Z</span>
+        <span class="lbl">offset</span><span id="calResOX">–</span><span id="calResOY">–</span><span id="calResOZ">–</span>
+        <span class="lbl">scale</span><span id="calResSX">–</span><span id="calResSY">–</span><span id="calResSZ">–</span>
+      </div>
+      <p class="muted" id="calSaveMsg" style="margin-top:10px"></p>
+    </div>
+
+    <div class="modal-actions">
+      <button class="ghost" id="calCancel">Cancel</button>
+      <button id="calStart">Start Collecting</button>
+      <button id="calFinish" style="display:none">Finish &amp; Compute</button>
+      <button id="calSave" style="display:none">Save to Device</button>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+// ---- Config ----------------------------------------------------------------
+const THROTTLE = 0.4;        // fixed key throttle magnitude
+const CMD_HZ = 10;           // command send rate while keys held
+const STALE_MS = 2000;       // telemetry stale threshold
+
+// ---- Connection state ------------------------------------------------------
+let ws = null;
+let ip = localStorage.getItem("falconIp") || location.hostname || "192.168.12.104";
+let reconnectTimer = null;
+let lastTelemetry = 0;
+let latest = null;           // most recent telemetry payload (rendered via rAF)
+
+const $ = (id) => document.getElementById(id);
+$("ip").value = ip;
+
+function setStatus(state, text) {
+  $("dot").className = "dot " + state;
+  $("statusText").textContent = text;
+}
+
+function connect() {
+  ip = $("ip").value.trim();
+  localStorage.setItem("falconIp", ip);
+  if (ws) { try { ws.close(); } catch (e) {} ws = null; }
+
+  setStatus("reconnecting", "connecting…");
+  // (Re)point the MJPEG stream.
+  $("stream").src = "http://" + ip + "/stream?ts=" + Date.now();
+
+  try {
+    ws = new WebSocket("ws://" + ip + "/ws");
+  } catch (e) {
+    scheduleReconnect();
+    return;
+  }
+
+  ws.onopen = () => {
+    setStatus("connected", "connected");
+    // Force the server to register this (push-only) socket for telemetry.
+    try { ws.send(JSON.stringify({ type: "hello" })); } catch (e) {}
+  };
+  ws.onclose = () => { setStatus("disconnected", "disconnected"); scheduleReconnect(); };
+  ws.onerror = () => { setStatus("reconnecting", "error"); };
+  ws.onmessage = (ev) => {
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch (e) { return; }
+    if (msg.type === "telemetry") {
+      latest = msg;
+      lastTelemetry = performance.now();
+      if (cal.active && msg.mag) calCollectSample(msg.mag);
+    }
+  };
+}
+
+function scheduleReconnect() {
+  if (reconnectTimer) return;
+  reconnectTimer = setTimeout(() => { reconnectTimer = null; connect(); }, 3000);
+}
+
+$("connectBtn").onclick = connect;
+$("reloadCam").onclick = () => { $("stream").src = "http://" + ip + "/stream?ts=" + Date.now(); };
+$("stream").onerror = () => { $("camMsg").style.display = "block"; };
+$("stream").onload  = () => { $("camMsg").style.display = "none"; };
+
+// ---- Keyboard flight control ----------------------------------------------
+const held = {};
+const CONTROL_KEYS = ["w", "a", "s", "d", "q", "e"];
+let anyKeyLastFrame = false;
+
+document.addEventListener("keydown", (e) => {
+  const k = e.key.toLowerCase();
+  if (CONTROL_KEYS.includes(k)) {
+    if (!held[k]) { held[k] = true; updateLegend(); }
+    e.preventDefault();
+  }
+});
+document.addEventListener("keyup", (e) => {
+  const k = e.key.toLowerCase();
+  if (CONTROL_KEYS.includes(k)) { held[k] = false; updateLegend(); e.preventDefault(); }
+});
+window.addEventListener("blur", () => { for (const k of CONTROL_KEYS) held[k] = false; updateLegend(); });
+
+function updateLegend() {
+  document.querySelectorAll(".legend .key").forEach((el) => {
+    el.classList.toggle("active", !!held[el.dataset.k]);
+  });
+}
+
+// Motor roles (viewed from above, nose forward):
+//   M1 altitude right   M2 forward right
+//   M4 altitude left    M3 forward left
+// Forward/back + yaw mix onto the forward pair (M2 right, M3 left);
+// ascend/descend mix onto the altitude pair (M1 right, M4 left).
+function computeMotors() {
+  let m1 = 0, m2 = 0, m3 = 0, m4 = 0;
+  if (held.w) { m2 += THROTTLE; m3 += THROTTLE; }   // forward
+  if (held.s) { m2 -= THROTTLE; m3 -= THROTTLE; }   // backward
+  if (held.a) { m2 += THROTTLE; m3 -= THROTTLE; }   // yaw left  (right fwd, left rev)
+  if (held.d) { m2 -= THROTTLE; m3 += THROTTLE; }   // yaw right (right rev, left fwd)
+  if (held.e) { m1 += THROTTLE; m4 += THROTTLE; }   // ascend
+  if (held.q) { m1 -= THROTTLE; m4 -= THROTTLE; }   // descend
+  const clamp = (v) => Math.max(-1, Math.min(1, v));
+  return { m1: clamp(m1), m2: clamp(m2), m3: clamp(m3), m4: clamp(m4) };
+}
+
+setInterval(() => {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  const anyHeld = CONTROL_KEYS.some((k) => held[k]);
+  if (anyHeld) {
+    const m = computeMotors();
+    ws.send(JSON.stringify({ type: "motor_cmd", m1: m.m1, m2: m.m2, m3: m.m3, m4: m.m4 }));
+    anyKeyLastFrame = true;
+  } else if (anyKeyLastFrame) {
+    // Send a single zero command on release, then go quiet.
+    ws.send(JSON.stringify({ type: "motor_cmd", m1: 0, m2: 0, m3: 0, m4: 0 }));
+    anyKeyLastFrame = false;
+  }
+}, 1000 / CMD_HZ);
+
+// ---- Instrument rendering (SVG built once) --------------------------------
+function buildCompass() {
+  const svg = $("compass");
+  const ns = "http://www.w3.org/2000/svg";
+  let html = `<circle cx="100" cy="100" r="92" fill="#0d1117" stroke="#30363d" stroke-width="2"/>`;
+  for (let a = 0; a < 360; a += 30) {
+    const rad = (a - 90) * Math.PI / 180;
+    const r1 = 92, r2 = a % 90 === 0 ? 78 : 84;
+    html += `<line x1="${100 + r1 * Math.cos(rad)}" y1="${100 + r1 * Math.sin(rad)}"
+             x2="${100 + r2 * Math.cos(rad)}" y2="${100 + r2 * Math.sin(rad)}"
+             stroke="#8b949e" stroke-width="1.5"/>`;
+  }
+  const card = [["N", 0], ["E", 90], ["S", 180], ["W", 270]];
+  for (const [lbl, a] of card) {
+    const rad = (a - 90) * Math.PI / 180;
+    html += `<text x="${100 + 66 * Math.cos(rad)}" y="${100 + 66 * Math.sin(rad)}"
+             fill="${lbl === 'N' ? '#f85149' : '#c9d1d9'}" font-size="14" font-family="monospace"
+             text-anchor="middle" dominant-baseline="central">${lbl}</text>`;
+  }
+  html += `<g id="needle">
+             <polygon points="100,22 108,108 100,96 92,108" fill="#f85149"/>
+             <polygon points="100,178 108,92 100,104 92,92" fill="#8b949e"/>
+           </g>
+           <circle cx="100" cy="100" r="4" fill="#c9d1d9"/>`;
+  svg.innerHTML = html;
+}
+
+function buildADI() {
+  const svg = $("adi");
+  svg.innerHTML = `
+    <defs><clipPath id="adiClip"><circle cx="100" cy="100" r="90"/></clipPath></defs>
+    <g clip-path="url(#adiClip)">
+      <g id="horizon">
+        <rect x="-150" y="-200" width="500" height="300" fill="#1f6feb"/>
+        <rect x="-150" y="100" width="500" height="300" fill="#6e4b2a"/>
+        <line x1="-150" y1="100" x2="350" y2="100" stroke="#fff" stroke-width="2"/>
+        <line x1="40" y1="70" x2="160" y2="70" stroke="#fff" stroke-width="1" opacity="0.6"/>
+        <line x1="40" y1="130" x2="160" y2="130" stroke="#fff" stroke-width="1" opacity="0.6"/>
+      </g>
+    </g>
+    <circle cx="100" cy="100" r="90" fill="none" stroke="#30363d" stroke-width="2"/>
+    <polygon points="100,100 80,108 120,108" fill="#d29922"/>
+    <line x1="55" y1="100" x2="85" y2="100" stroke="#d29922" stroke-width="3"/>
+    <line x1="115" y1="100" x2="145" y2="100" stroke="#d29922" stroke-width="3"/>`;
+}
+
+const CARDINALS = ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"];
+function cardinal(deg) { return CARDINALS[Math.round(deg / 22.5) % 16]; }
+
+function render() {
+  const stale = performance.now() - lastTelemetry > STALE_MS;
+  $("staleMsg").innerHTML = (stale && lastTelemetry > 0)
+    ? '<span class="stale">⚠ STALE DATA (no telemetry &gt;2s)</span>' : "";
+
+  if (latest) {
+    const t = latest;
+    // Compass
+    const hdg = t.mag?.heading ?? 0;
+    document.getElementById("needle").setAttribute("transform", `rotate(${hdg} 100 100)`);
+    $("headingVal").textContent = hdg.toFixed(0).padStart(3, "0");
+    $("headingCard").textContent = " " + cardinal(hdg);
+    // Attitude
+    const roll = t.attitude?.roll ?? 0, pitch = t.attitude?.pitch ?? 0;
+    const py = Math.max(-80, Math.min(80, pitch * 2));
+    document.getElementById("horizon").setAttribute(
+      "transform", `rotate(${-roll} 100 100) translate(0 ${py})`);
+    $("rollVal").textContent = roll.toFixed(1);
+    $("pitchVal").textContent = pitch.toFixed(1);
+    // Power & altitude
+    const v = t.battery?.voltage ?? 0, pct = t.battery?.percent ?? 0;
+    $("vVal").textContent = v.toFixed(2);
+    $("pctVal").textContent = pct;
+    const bar = $("battBar");
+    bar.style.width = pct + "%";
+    bar.style.background = pct > 50 ? "var(--good)" : pct > 20 ? "var(--warn)" : "var(--bad)";
+    $("altVal").textContent = t.tof?.distance_mm ?? "--";
+    // WiFi link quality (dBm; 0 = not associated)
+    const rssi = t.wifi?.rssi;
+    const rEl = $("rssiVal");
+    if (typeof rssi === "number" && rssi < 0) {
+      rEl.textContent = rssi + " dBm";
+      rEl.style.color = rssi > -60 ? "var(--good)" : rssi > -75 ? "var(--warn)" : "var(--bad)";
+    } else {
+      rEl.textContent = "--";
+      rEl.style.color = "";
+    }
+    renderTof(t.tof?.grid);
+    // Raw sensors
+    const fmt3 = (o, k) => [o[k+"x"]??o.x, o[k+"y"]??o.y, o[k+"z"]??o.z];
+    const a = t.imu || {}, g = t.imu || {}, m = t.mag || {};
+    $("accVal").textContent = `${(a.ax??0).toFixed(2)} ${(a.ay??0).toFixed(2)} ${(a.az??0).toFixed(2)}`;
+    $("gyrVal").textContent = `${(g.gx??0).toFixed(1)} ${(g.gy??0).toFixed(1)} ${(g.gz??0).toFixed(1)}`;
+    $("magVal").textContent = `${(m.x??0).toFixed(1)} ${(m.y??0).toFixed(1)} ${(m.z??0).toFixed(1)}`;
+    // Mag calibration (stored on device)
+    const mc = t.magcal;
+    if (mc) {
+      $("calOff").textContent = `${mc.ox.toFixed(1)} ${mc.oy.toFixed(1)} ${mc.oz.toFixed(1)}`;
+      $("calScl").textContent = `${mc.sx.toFixed(3)} ${mc.sy.toFixed(3)} ${mc.sz.toFixed(3)}`;
+    }
+    // Motors
+    renderMotors(t.motors || {});
+  }
+  requestAnimationFrame(render);
+}
+
+const MOTOR_LABELS = { 1: "M1 alt R", 2: "M2 fwd R", 3: "M3 fwd L", 4: "M4 alt L" };
+function buildMotors() {
+  const box = $("motors");
+  box.innerHTML = "";
+  for (let i = 1; i <= 4; i++) {
+    const row = document.createElement("div");
+    row.className = "motorbar";
+    row.innerHTML =
+      `<span>${MOTOR_LABELS[i]}</span>
+       <div class="track"><div class="mid"></div><div class="fill" id="mfill${i}"></div></div>
+       <span class="v" id="mval${i}" style="text-align:right">0.00</span>`;
+    box.appendChild(row);
+  }
+}
+function renderMotors(m) {
+  for (let i = 1; i <= 4; i++) {
+    const v = m["m" + i] ?? 0;
+    const fill = $("mfill" + i);
+    const pct = Math.abs(v) * 50;
+    if (v >= 0) { fill.style.left = "50%"; fill.style.width = pct + "%"; fill.style.background = "var(--good)"; }
+    else { fill.style.left = (50 - pct) + "%"; fill.style.width = pct + "%"; fill.style.background = "var(--warn)"; }
+    $("mval" + i).textContent = v.toFixed(2);
+  }
+}
+
+// ---- ToF depth field (4x4) ------------------------------------------------
+// The VL53L5CX streams a 16-zone distance grid (row-major). We paint it as a
+// live depth map: a near→far colormap with per-zone distances in cm, the
+// center zone (which feeds altitude) ringed, and a fixed color range so the
+// colors keep a consistent meaning frame to frame.
+const TOF_N = 4;                 // 4x4 grid
+const TOF_CENTER = 5;            // center zone = altitude source (matches firmware)
+const TOF_MAX_MM = 2000;         // color-scale ceiling; beyond reads as "far"
+
+// Near→far color stops (RGB). Warm = close, cool = distant.
+const TOF_STOPS = [
+  [0.00, [248, 81, 73]],   // red     — right under it
+  [0.25, [210, 153, 34]],  // amber
+  [0.50, [63, 185, 80]],   // green
+  [0.75, [88, 166, 255]],  // blue
+  [1.00, [31, 111, 235]],  // deep blue — far away
+];
+
+function tofColor(t) {
+  t = Math.max(0, Math.min(1, t));
+  for (let i = 1; i < TOF_STOPS.length; i++) {
+    const [t0, c0] = TOF_STOPS[i - 1];
+    const [t1, c1] = TOF_STOPS[i];
+    if (t <= t1) {
+      const f = (t - t0) / ((t1 - t0) || 1);
+      const c = [0, 1, 2].map((j) => Math.round(c0[j] + (c1[j] - c0[j]) * f));
+      return `rgb(${c[0]},${c[1]},${c[2]})`;
+    }
+  }
+  return `rgb(31,111,235)`;
+}
+
+function buildTof() {
+  const svg = $("tofGrid");
+  const pad = 4, gap = 4;
+  const cell = (200 - pad * 2 - gap * (TOF_N - 1)) / TOF_N;
+  let html = "";
+  for (let r = 0; r < TOF_N; r++) {
+    for (let c = 0; c < TOF_N; c++) {
+      const z = r * TOF_N + c;
+      const x = pad + c * (cell + gap), y = pad + r * (cell + gap);
+      html +=
+        `<rect class="tof-cell" id="tofc${z}" x="${x}" y="${y}"
+           width="${cell}" height="${cell}" rx="6"
+           fill="#161b22" stroke="#30363d"><title>zone ${z}</title></rect>
+         <text class="tof-txt" id="toft${z}" x="${x + cell / 2}"
+           y="${y + cell / 2}" fill="#8b949e">–</text>`;
+    }
+  }
+  // Ring the center zone so it's clear which cell drives the altitude readout.
+  const cr = Math.floor(TOF_CENTER / TOF_N), cc = TOF_CENTER % TOF_N;
+  const rx = pad + cc * (cell + gap), ry = pad + cr * (cell + gap);
+  html +=
+    `<rect x="${rx}" y="${ry}" width="${cell}" height="${cell}" rx="6"
+       fill="none" stroke="#c9d1d9" stroke-width="2" pointer-events="none"/>`;
+  svg.innerHTML = html;
+
+  // Legend gradient mirrors the colormap; label the fixed range endpoints.
+  $("tofGrad").style.background =
+    `linear-gradient(90deg, ${tofColor(0)}, ${tofColor(0.25)}, ` +
+    `${tofColor(0.5)}, ${tofColor(0.75)}, ${tofColor(1)})`;
+  $("tofNear").textContent = "0";
+  $("tofFar").textContent = (TOF_MAX_MM / 10).toFixed(0) + "+ cm";
+}
+
+function renderTof(grid) {
+  if (!Array.isArray(grid) || grid.length < 16) return;
+  let mn = Infinity, mx = -Infinity;
+  for (const d of grid) {
+    if (d > 0) { if (d < mn) mn = d; if (d > mx) mx = d; }
+  }
+  for (let z = 0; z < 16; z++) {
+    const d = grid[z] || 0;
+    const cell = $("tofc" + z), txt = $("toft" + z);
+    if (!cell || !txt) continue;
+    if (d <= 0) {                       // no valid return in this zone
+      cell.setAttribute("fill", "#161b22");
+      txt.textContent = "–";
+      txt.setAttribute("fill", "#8b949e");
+      continue;
+    }
+    const t = d / TOF_MAX_MM;
+    cell.setAttribute("fill", tofColor(t));
+    txt.textContent = Math.round(d / 10);            // mm → cm
+    txt.setAttribute("fill", t > 0.6 ? "#e6edf3" : "#0d1117");  // keep contrast
+  }
+  const cm = (v) => (v / 10).toFixed(0) + " cm";
+  $("tofMin").textContent = isFinite(mn) ? cm(mn) : "--";
+  $("tofMax").textContent = isFinite(mx) ? cm(mx) : "--";
+  const cd = grid[TOF_CENTER] || 0;
+  $("tofCtr").textContent = cd > 0 ? cm(cd) : "--";
+}
+
+// ---- Magnetometer calibration ---------------------------------------------
+// Samples are collected in the browser from the raw mag telemetry stream; the
+// hard-iron offset and diagonal soft-iron scale are computed with the standard
+// min/max method, then pushed to the device to persist in NVS.
+const cal = {
+  active: false,
+  n: 0,
+  min: [Infinity, Infinity, Infinity],
+  max: [-Infinity, -Infinity, -Infinity],
+  result: null,
+};
+
+function calReset() {
+  cal.n = 0;
+  cal.min = [Infinity, Infinity, Infinity];
+  cal.max = [-Infinity, -Infinity, -Infinity];
+  cal.result = null;
+}
+
+function calCollectSample(mag) {
+  const v = [mag.x, mag.y, mag.z];
+  if (v.some((x) => typeof x !== "number" || !isFinite(x))) return;
+  for (let i = 0; i < 3; i++) {
+    if (v[i] < cal.min[i]) cal.min[i] = v[i];
+    if (v[i] > cal.max[i]) cal.max[i] = v[i];
+  }
+  cal.n++;
+  calRenderProgress();
+}
+
+function calRenderProgress() {
+  $("calCount").textContent = cal.n;
+  const ax = ["X", "Y", "Z"];
+  for (let i = 0; i < 3; i++) {
+    const lo = cal.min[i], hi = cal.max[i];
+    $("calMin" + ax[i]).textContent = isFinite(lo) ? lo.toFixed(1) : "–";
+    $("calMax" + ax[i]).textContent = isFinite(hi) ? hi.toFixed(1) : "–";
+    $("calRng" + ax[i]).textContent = isFinite(hi - lo) ? (hi - lo).toFixed(1) : "–";
+  }
+}
+
+function calCompute() {
+  const offset = [0, 0, 0], radius = [0, 0, 0], scale = [1, 1, 1];
+  for (let i = 0; i < 3; i++) {
+    offset[i] = (cal.max[i] + cal.min[i]) / 2;
+    radius[i] = (cal.max[i] - cal.min[i]) / 2;
+  }
+  const avg = (radius[0] + radius[1] + radius[2]) / 3;
+  for (let i = 0; i < 3; i++) {
+    scale[i] = radius[i] > 1e-3 ? avg / radius[i] : 1;
+  }
+  return { offset, scale, n: cal.n };
+}
+
+function calShow(phase) {
+  // phase: "intro" | "collecting" | "done"
+  $("calIntro").style.display = phase === "intro" ? "" : "none";
+  $("calCollecting").style.display = phase === "collecting" ? "" : "none";
+  $("calDone").style.display = phase === "done" ? "" : "none";
+  $("calStart").style.display = phase === "intro" ? "" : "none";
+  $("calFinish").style.display = phase === "collecting" ? "" : "none";
+  $("calSave").style.display = phase === "done" ? "" : "none";
+}
+
+function calOpen() {
+  cal.active = false;
+  calReset();
+  calShow("intro");
+  $("calModal").style.display = "flex";
+}
+
+function calClose() {
+  cal.active = false;
+  $("calModal").style.display = "none";
+}
+
+$("calBtn").onclick = calOpen;
+$("calCancel").onclick = calClose;
+
+$("calStart").onclick = () => {
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    alert("Connect to the blimp first.");
+    return;
+  }
+  calReset();
+  calRenderProgress();
+  cal.active = true;
+  calShow("collecting");
+};
+
+$("calFinish").onclick = () => {
+  cal.active = false;
+  if (cal.n < 20 || cal.min.some((x) => !isFinite(x))) {
+    alert("Not enough samples collected. Rotate the airframe and try again.");
+    cal.active = true;
+    return;
+  }
+  const r = calCompute();
+  cal.result = r;
+  const ax = ["X", "Y", "Z"];
+  $("calDoneN").textContent = r.n;
+  for (let i = 0; i < 3; i++) {
+    $("calResO" + ax[i]).textContent = r.offset[i].toFixed(1);
+    $("calResS" + ax[i]).textContent = r.scale[i].toFixed(3);
+  }
+  $("calSaveMsg").textContent = "";
+  calShow("done");
+};
+
+$("calSave").onclick = () => {
+  if (!cal.result) return;
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    $("calSaveMsg").textContent = "Not connected — cannot save.";
+    return;
+  }
+  const { offset, scale } = cal.result;
+  ws.send(JSON.stringify({
+    type: "mag_cal",
+    ox: offset[0], oy: offset[1], oz: offset[2],
+    sx: scale[0], sy: scale[1], sz: scale[2],
+  }));
+  $("calSaveMsg").innerHTML =
+    '<span style="color:var(--good)">Sent to device — confirm the stored '
+    + 'values update in the Mag Calibration panel.</span>';
+};
+
+// ---- Boot ------------------------------------------------------------------
+buildCompass();
+buildADI();
+buildMotors();
+buildTof();
+requestAnimationFrame(render);
+connect();
+</script>
+</body>
+</html>

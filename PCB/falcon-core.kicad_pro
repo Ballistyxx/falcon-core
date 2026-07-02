@@ -70,11 +70,40 @@
         "silk_text_thickness": 0.1,
         "silk_text_upright": false,
         "zones": {
-          "min_clearance": 0.2
+          "border_display_style": 2,
+          "border_hatch_pitch": 0.5,
+          "corner_radius": 0.0,
+          "corner_smoothing": 0,
+          "fill_mode": 0,
+          "hatch_gap": 1.5,
+          "hatch_orientation": 0.0,
+          "hatch_smoothing_level": 0,
+          "hatch_smoothing_value": 0.1,
+          "hatch_thickness": 1.0,
+          "min_clearance": 0.0,
+          "min_island_area": 10.0,
+          "min_thickness": 0.25,
+          "pad_connection": 2,
+          "remove_islands": 0,
+          "thermal_relief_gap": 0.5,
+          "thermal_relief_spoke_width": 0.5
         }
       },
       "diff_pair_dimensions": [],
-      "drc_exclusions": [],
+      "drc_exclusions": [
+        [
+          "courtyards_overlap|-2895000|6054999|9462131b-561f-48bb-8875-51a9d8aeef6d|d2e3bbe1-b72c-44fd-af59-089a5a134605",
+          ""
+        ],
+        [
+          "courtyards_overlap|19505000|25305000|9462131b-561f-48bb-8875-51a9d8aeef6d|d58eea8d-1202-47c9-a29a-ed4b15438610",
+          ""
+        ],
+        [
+          "courtyards_overlap|4421680|6054999|4a93bec7-b68e-4a72-a1c4-9fdb87923738|d2e3bbe1-b72c-44fd-af59-089a5a134605",
+          ""
+        ]
+      ],
       "meta": {
         "version": 2
       },
@@ -665,7 +694,7 @@
         "uuid": "768e6c2a-1036-4f9f-bf41-2bf1cb5c321e"
       }
     ],
-    "used_designators": "",
+    "used_designators": "C30-31,C36,S1-2,#PWR40-41,#PWR62,#PWR89,#PWR93",
     "variants": []
   },
   "sheets": [

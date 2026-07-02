@@ -43,3 +43,9 @@ fp-info-cache
 *.kicad_prl
 PCB/fabrication-toolkit-options.json
 PCB/production
+
+
+.vscode
+src/.cache
+src/build
+docs/FIRMWARE.md
