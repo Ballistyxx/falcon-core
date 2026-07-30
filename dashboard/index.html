@@ -89,6 +89,23 @@
   .motorbar .track .mid { position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--edge); }
   .motorbar .track .fill { position: absolute; top: 0; bottom: 0; left: 50%; width: 0%; background: var(--accent); }
 
+  .ctrl-mode { display: flex; gap: 8px; margin-bottom: 10px; }
+  .ctrl-mode label { flex: 1; text-align: center; padding: 6px 0; border: 1px solid var(--edge); border-radius: 6px; cursor: pointer; color: var(--muted); font-size: 13px; user-select: none; }
+  .ctrl-mode label:has(input:checked) { border-color: var(--accent); color: var(--fg); background: rgba(88,166,255,0.12); }
+  .ctrl-mode input { position: absolute; opacity: 0; pointer-events: none; }
+  .smooth-panel[hidden] { display: none; }
+  .smooth-row { display: flex; gap: 16px; align-items: stretch; margin: 4px 0 12px; }
+  .pid-menu { margin: 0 0 12px; border: 1px solid var(--edge); border-radius: 6px; }
+  .pid-menu > summary { cursor: pointer; padding: 6px 10px; color: var(--muted); font-size: 12px; user-select: none; }
+  .pid-grid { display: grid; grid-template-columns: 1fr 76px 1fr 76px; gap: 6px 8px; align-items: center; padding: 6px 10px 10px; }
+  .pid-grid label { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .pid-grid input { width: 100%; background: var(--bg); border: 1px solid var(--edge); border-radius: 4px; color: var(--fg); font-size: 12px; padding: 3px 5px; font-variant-numeric: tabular-nums; }
+  .smooth-panel .hdg-col { flex: 1; display: flex; flex-direction: column; justify-content: center; }
+  .smooth-panel .alt-col { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .smooth-panel .alt-col input[type=range] { writing-mode: vertical-lr; direction: rtl; width: 10px; height: 120px; -webkit-appearance: slider-vertical; accent-color: var(--accent); }
+  .smooth-panel .cap { color: var(--muted); font-size: 11px; }
+  .smooth-panel b { color: var(--fg); font-variant-numeric: tabular-nums; }
+
   .legend kbd {
     background: var(--bg); border: 1px solid var(--edge); border-bottom-width: 2px;
     border-radius: 4px; padding: 1px 6px; margin-right: 4px; color: var(--fg);
@@ -222,15 +239,43 @@
         <tr><td class="k">offset x/y/z</td><td class="v" id="calOff">--</td></tr>
         <tr><td class="k">scale x/y/z</td><td class="v" id="calScl">--</td></tr>
       </table>
-      <div style="margin-top:8px"><button class="ghost" id="calBtn">Calibrate…</button></div>
+      <div style="margin-top:8px; display:flex; gap:8px;">
+        <button class="ghost" id="calBtn">Calibrate…</button>
+        <button class="ghost" id="learnBtn">Learn PID…</button>
+      </div>
     </section>
 
     <section class="panel">
       <h2>Motor Outputs</h2>
+      <div class="ctrl-mode">
+        <label><input type="radio" name="ctrlmode" value="raw" checked> Raw control</label>
+        <label><input type="radio" name="ctrlmode" value="smooth"> Smooth control</label>
+      </div>
       <div class="motorbar" style="margin-bottom:10px">
         <span class="lbl">power</span>
         <input type="range" id="power" min="0" max="1" step="0.01" value="0.4" style="width:100%">
         <span id="powerVal" style="text-align:right">0.40</span>
+      </div>
+      <div id="smoothPanel" class="smooth-panel" hidden>
+        <div class="smooth-row">
+          <div class="hdg-col">
+            <div class="motorbar" style="margin:0">
+              <span class="lbl">heading</span>
+              <input type="range" id="hdgSet" min="0" max="359" step="1" value="0" style="width:100%">
+              <span id="hdgSetVal" style="text-align:right">0°</span>
+            </div>
+            <div class="cap" style="margin-top:8px">Hold heading &amp; altitude steady.<br>A/D nudge heading · Q/E nudge altitude · W/S translate.</div>
+          </div>
+          <div class="alt-col">
+            <span class="cap">alt</span>
+            <input type="range" id="altSet" min="0" max="2000" step="10" value="500">
+            <b id="altSetVal">500</b><span class="cap">mm</span>
+          </div>
+        </div>
+        <details class="pid-menu">
+          <summary>PID tuning</summary>
+          <div class="pid-grid" id="pidGrid"></div>
+        </details>
       </div>
       <div id="motors"></div>
     </section>
@@ -452,6 +497,268 @@ function updateLegend() {
   });
 }
 
+// ---- Smooth (fly-by-wire) control ------------------------------------------
+// Closed-loop assist that holds compass heading and TOF altitude steady. Runs
+// entirely on the dashboard from streamed telemetry; the firmware still just
+// receives motor_cmd. Manual keys gently adjust the persistent setpoints (A/D
+// heading, Q/E altitude) or add ramped translation (W/S), so the blimp keeps
+// whatever heading/altitude it was last nudged to.
+let controlMode = "raw";
+let targetHeading = 0;    // deg, compass setpoint
+let targetAlt = 500;      // mm, TOF altitude setpoint
+let fwdRamp = 0;          // ramped forward translation [-1,1]
+let altI = 0;            // altitude integral accumulator
+let altRateFilt = 0;     // low-pass filtered vertical speed (mm/s)
+let altPrev = null;      // last altitude sample (mm) for the derivative
+let lastTick = performance.now();
+const SMOOTH = {
+  Kp_h: 0.020,           // heading P    (cmd per deg error)
+  Kp_a: 0.0018,          // altitude P   (cmd per mm error)
+  Ki_a: 0.0007,          // altitude I   (cmd per mm·s) — counters the steady sink
+  Kd_a: 0.0032,          // altitude D   (cmd per mm/s) — damps vertical momentum
+  fwdLift: 0.20,         // feedforward: extra up-thrust per unit |forward| — the
+                         //   forward props' airflow robs the vertical props of lift
+  I_LIMIT: 0.35,         // anti-windup: cap on the Ki*altI contribution
+  RATE_LP: 0.4,          // 0..1 smoothing on the measured vertical speed
+  yawRate: 45,           // deg/s heading slew from A/D
+  altRate: 250,          // mm/s altitude slew from Q/E
+  fwdMax: 0.8,           // forward translation authority (W/S)
+  fwdRampRate: 1.5,      // per-second ramp toward the forward target (no lurch)
+};
+
+// Relay-feedback auto-tuning (Åström–Hägglund): bang-bang the vertical props
+// around the current altitude to force a limit cycle, measure its period and
+// amplitude, then set the altitude PID from Ziegler–Nichols. Smarter than
+// guessing gains — it measures the blimp's own vertical response.
+const LEARN = {
+  d: 0.6,              // relay amplitude (pre-power-scale command)
+  hyst: 12,            // mm hysteresis band (rejects TOF noise)
+  settleFlips: 3,      // relay switches to discard as startup transient
+  flipsNeeded: 6,      // measured switches to collect before solving
+  timeoutMs: 30000,    // give up if no clean oscillation forms
+};
+let learn = null;      // active tuning run state, or null
+
+const clampv = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const wrap360 = (a) => ((a % 360) + 360) % 360;
+const angErr = (target, cur) => { let e = wrap360(target - cur); if (e > 180) e -= 360; return e; };
+
+function syncSetSliders() {
+  const h = wrap360(targetHeading);
+  $("hdgSet").value = h; $("hdgSetVal").textContent = Math.round(h) + "°";
+  $("altSet").value = clampv(targetAlt, 0, 2000);
+  $("altSetVal").textContent = Math.round(targetAlt);
+}
+
+function setControlMode(mode) {
+  controlMode = mode;
+  const smooth = mode === "smooth";
+  $("smoothPanel").hidden = !smooth;
+  if (smooth) {
+    // Capture the current pose so it holds where it is, not the slider default.
+    const h = latest?.attitude?.yaw, a = latest?.tof?.distance_mm;
+    if (typeof h === "number") targetHeading = Math.round(h);
+    if (typeof a === "number" && a > 0) targetAlt = a;
+    altI = 0; fwdRamp = 0; altRateFilt = 0; altPrev = null;
+    syncSetSliders();
+  } else {
+    // Leaving assisted control: abort any tuning run and kill all motors.
+    if (learn) finishLearn(false, true);
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "motor_cmd", m1: 0, m2: 0, m3: 0, m4: 0 }));
+    }
+    anyKeyLastFrame = false;
+  }
+}
+
+for (const r of document.querySelectorAll('input[name="ctrlmode"]')) {
+  r.addEventListener("change", () => { if (r.checked) setControlMode(r.value); });
+}
+$("hdgSet").addEventListener("input", () => {
+  targetHeading = parseFloat($("hdgSet").value);
+  $("hdgSetVal").textContent = Math.round(targetHeading) + "°";
+});
+$("altSet").addEventListener("input", () => {
+  targetAlt = parseFloat($("altSet").value);
+  $("altSetVal").textContent = Math.round(targetAlt);
+});
+
+// Live PID / tuning menu: number inputs bound straight to the SMOOTH gains, so
+// changes take effect on the next control tick with no reload.
+const PID_LABELS = {
+  Kp_h: "heading Kp", Kp_a: "alt Kp", Ki_a: "alt Ki", Kd_a: "alt Kd",
+  fwdLift: "fwd→lift", I_LIMIT: "I limit", RATE_LP: "rate LP", yawRate: "yaw °/s",
+  altRate: "alt mm/s", fwdMax: "fwd max", fwdRampRate: "fwd ramp",
+};
+(() => {
+  const grid = $("pidGrid");
+  for (const key of Object.keys(SMOOTH)) {
+    const lab = document.createElement("label");
+    lab.textContent = PID_LABELS[key] || key;
+    const inp = document.createElement("input");
+    inp.type = "number"; inp.step = "any"; inp.value = SMOOTH[key];
+    inp.id = "pid_" + key;
+    inp.addEventListener("input", () => {
+      const v = parseFloat(inp.value);
+      if (!isNaN(v)) SMOOTH[key] = v;
+    });
+    grid.appendChild(lab); grid.appendChild(inp);
+  }
+})();
+// Push current SMOOTH values back into the tuning inputs (after auto-learning).
+function refreshPidInputs() {
+  for (const key of Object.keys(SMOOTH)) {
+    const inp = $("pid_" + key);
+    if (inp) inp.value = +SMOOTH[key].toFixed(5);
+  }
+}
+
+function startLearn(currentAlt) {
+  learn = {
+    target: currentAlt,
+    headingTarget: (typeof latest?.attitude?.yaw === "number") ? latest.attitude.yaw : targetHeading,
+    up: true,              // first kick is upward
+    flips: [], mflips: [], // all switches / switches during the measured window
+    measuring: false, eMin: 0, eMax: 0,
+    tStart: performance.now(),
+  };
+  $("learnBtn").textContent = "Learning… (cancel)";
+}
+
+// One tuning tick: relay on altitude + heading hold, record the limit cycle.
+function learnStep(dt, alt, heading) {
+  const L = learn, now = performance.now();
+  const e = alt - L.target;
+  const prevUp = L.up;
+  if (e < -LEARN.hyst) L.up = true;        // below setpoint → drive up
+  else if (e > LEARN.hyst) L.up = false;   // above setpoint → drive down
+  if (L.up !== prevUp) {
+    L.flips.push(now);
+    if (!L.measuring && L.flips.length >= LEARN.settleFlips) {
+      L.measuring = true; L.eMin = e; L.eMax = e;   // transient over, start recording
+    }
+    if (L.measuring) L.mflips.push(now);
+  }
+  if (L.measuring) { if (e > L.eMax) L.eMax = e; if (e < L.eMin) L.eMin = e; }
+
+  // Drive: relay on the vertical props, hold heading on the forward props.
+  const g = THROTTLE;
+  const altCmd = L.up ? LEARN.d : -LEARN.d;
+  const yaw = clampv(SMOOTH.Kp_h * angErr(L.headingTarget, heading), -1, 1);
+  ws.send(JSON.stringify({
+    type: "motor_cmd",
+    m1: clampv(-yaw * g, -1, 1), m3: clampv(yaw * g, -1, 1),
+    m2: clampv(altCmd * g, -1, 1), m4: clampv(altCmd * g, -1, 1),
+  }));
+
+  if (L.measuring && L.mflips.length >= LEARN.flipsNeeded) finishLearn(true);
+  else if (now - L.tStart > LEARN.timeoutMs) finishLearn(false);
+}
+
+function finishLearn(ok, cancelled) {
+  const L = learn;
+  learn = null;
+  $("learnBtn").textContent = "Learn PID…";
+  altI = 0; altPrev = null; altRateFilt = 0;
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "motor_cmd", m1: 0, m2: 0, m3: 0, m4: 0 }));
+  }
+  if (cancelled) return;
+
+  if (ok && L.mflips.length >= 2) {
+    // Ultimate period from mean half-period; amplitude from the process swing.
+    let sum = 0;
+    for (let i = 1; i < L.mflips.length; i++) sum += L.mflips[i] - L.mflips[i - 1];
+    const Pu = 2 * (sum / (L.mflips.length - 1)) / 1000;   // seconds
+    const a = (L.eMax - L.eMin) / 2;                        // mm
+    if (a >= 5 && isFinite(Pu) && Pu > 0) {
+      const Ku = 4 * LEARN.d / (Math.PI * a);               // ultimate gain (cmd/mm)
+      // Ziegler–Nichols "classic PID".
+      SMOOTH.Kp_a = 0.6 * Ku;
+      SMOOTH.Ki_a = 2 * SMOOTH.Kp_a / Pu;                   // Ti = Pu/2
+      SMOOTH.Kd_a = SMOOTH.Kp_a * Pu / 8;                   // Td = Pu/8
+      refreshPidInputs();
+      alert(`PID learned (altitude):\nKp=${SMOOTH.Kp_a.toFixed(4)}  Ki=${SMOOTH.Ki_a.toFixed(4)}  Kd=${SMOOTH.Kd_a.toFixed(4)}\nPu=${Pu.toFixed(2)}s, swing=±${a.toFixed(0)}mm`);
+      return;
+    }
+  }
+  alert("PID learning failed — no clean oscillation. Try raising power, then retry.");
+}
+
+$("learnBtn").addEventListener("click", () => {
+  if (learn) { finishLearn(false, true); return; }   // cancel in progress
+  if (!ws || ws.readyState !== WebSocket.OPEN) { alert("Connect to the blimp first."); return; }
+  if (THROTTLE < 0.15) { alert("Raise the power slider above ~0.15 before learning."); return; }
+  const a = latest?.tof?.distance_mm;
+  if (!(a > 0)) { alert("No altitude reading from the ToF sensor."); return; }
+  // Force smooth mode so the tuning loop runs.
+  const sm = document.querySelector('input[name="ctrlmode"][value="smooth"]');
+  if (sm) sm.checked = true;
+  setControlMode("smooth");
+  startLearn(a);
+});
+
+// One smooth-control step: read telemetry, update setpoints, run the loops,
+// and emit a motor command. Called every tick while in smooth mode.
+function stepSmooth(dt) {
+  // Require fresh telemetry; otherwise coast for safety.
+  if (!latest || (performance.now() - lastTelemetry) > STALE_MS) {
+    ws.send(JSON.stringify({ type: "motor_cmd", m1: 0, m2: 0, m3: 0, m4: 0 }));
+    return;
+  }
+  const heading = latest.attitude?.yaw ?? targetHeading;
+  const alt = latest.tof?.distance_mm ?? targetAlt;
+
+  // Auto-tuning run in progress: relay-drive instead of the normal loops.
+  if (learn) { learnStep(dt, alt, heading); return; }
+
+  // Manual, persistent setpoint nudges.
+  if (held.a) targetHeading -= SMOOTH.yawRate * dt;
+  if (held.d) targetHeading += SMOOTH.yawRate * dt;
+  targetHeading = wrap360(targetHeading);
+  if (held.q) targetAlt += SMOOTH.altRate * dt;
+  if (held.e) targetAlt -= SMOOTH.altRate * dt;
+  targetAlt = clampv(targetAlt, 0, 2000);
+  if (held.a || held.d || held.q || held.e) syncSetSliders();
+
+  // Forward translation (open-loop, ramped so it doesn't lurch).
+  const fwdTarget = (held.w ? 1 : 0) - (held.s ? 1 : 0);
+  const step = SMOOTH.fwdRampRate * dt;
+  fwdRamp += clampv(fwdTarget * SMOOTH.fwdMax - fwdRamp, -step, step);
+
+  // Heading hold (P) on the forward props' differential.
+  const yaw = clampv(SMOOTH.Kp_h * angErr(targetHeading, heading), -1, 1);
+
+  // Altitude hold (PID) on the vertical props. The integral offsets the constant
+  // sink; the derivative damps vertical momentum so it settles instead of
+  // overshooting. Derivative is on the measured altitude (low-passed against TOF
+  // noise), not the error, so moving the setpoint doesn't kick the output.
+  const aErr = targetAlt - alt;
+  if (altPrev === null) altPrev = alt;
+  const rate = (alt - altPrev) / dt;                 // mm/s, + = rising
+  altRateFilt += SMOOTH.RATE_LP * (rate - altRateFilt);
+  altPrev = alt;
+
+  // Feedforward for the forward-prop lift loss: add up-thrust proportional to
+  // how hard the forward props are running, so altitude doesn't dip when moving.
+  const liftFF = SMOOTH.fwdLift * Math.abs(fwdRamp);
+
+  const unclamped = SMOOTH.Kp_a * aErr + SMOOTH.Ki_a * altI - SMOOTH.Kd_a * altRateFilt + liftFF;
+  // Conditional integration: stop winding up while the output is saturated.
+  if (unclamped > -1 && unclamped < 1) {
+    altI = clampv(altI + aErr * dt, -SMOOTH.I_LIMIT / SMOOTH.Ki_a, SMOOTH.I_LIMIT / SMOOTH.Ki_a);
+  }
+  const altCmd = clampv(SMOOTH.Kp_a * aErr + SMOOTH.Ki_a * altI - SMOOTH.Kd_a * altRateFilt + liftFF, -1, 1);
+
+  // Compose, scaled by the power slider as an overall authority cap.
+  const g = THROTTLE;
+  const m1 = clampv((fwdRamp - yaw) * g, -1, 1);
+  const m3 = clampv((fwdRamp + yaw) * g, -1, 1);
+  const m2 = clampv(altCmd * g, -1, 1);
+  const m4 = clampv(altCmd * g, -1, 1);
+  ws.send(JSON.stringify({ type: "motor_cmd", m1, m2, m3, m4 }));
+}
+
 // Motor roles: M1 forward-left, M3 forward-right; M2 vertical-left, M4
 // vertical-right. Commands are bidirectional [-1,1] where + = CW, - = CCW.
 //   W: M1+M3 CW      S: M1+M3 CCW
@@ -471,7 +778,17 @@ function computeMotors() {
 }
 
 setInterval(() => {
+  const now = performance.now();
+  const dt = Math.min(0.25, (now - lastTick) / 1000);
+  lastTick = now;
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+  if (controlMode === "smooth") {
+    stepSmooth(dt);   // continuous closed-loop output
+    return;
+  }
+
+  // Raw control: direct key mixing, quiet when idle.
   const anyHeld = CONTROL_KEYS.some((k) => held[k]);
   if (anyHeld) {
     const m = computeMotors();

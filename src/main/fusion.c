@@ -41,7 +41,8 @@ void fusion_update(const float accel[3], const float gyro[3], const float mag[3]
 
     /* Heading: raw atan2 of the horizontal magnetometer components.
      * Tilt compensation is deferred (see instructions). */
-    float h = atan2f(mag[1], mag[0]) * RAD2DEG;
+    float h = atan2f(mag[1], mag[0]) * RAD2DEG + 45.0f;  /* mounting offset */
+    h = fmodf(h, 360.0f);
     if (h < 0.0f) h += 360.0f;
 
     *roll = s_roll;
