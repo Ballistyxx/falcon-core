@@ -21412,7 +21412,7 @@
 	)
 	(symbol
 		(lib_id "Connector:TestPoint")
-		(at 30.48 87.63 90)
+		(at 62.23 75.565 270)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -21423,27 +21423,29 @@
 		(fields_autoplaced yes)
 		(uuid "3fa3863c-0cae-4771-b1da-56ecb3ea909a")
 		(property "Reference" "TP4"
-			(at 27.178 81.915 90)
+			(at 67.31 74.2949 90)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
 				(font
 					(size 1.27 1.27)
 				)
+				(justify left)
 			)
 		)
 		(property "Value" "3V3"
-			(at 27.178 84.455 90)
+			(at 67.31 76.8349 90)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
 				(font
 					(size 1.27 1.27)
 				)
+				(justify left)
 			)
 		)
 		(property "Footprint" "TestPoint:TestPoint_Pad_D2.0mm"
-			(at 30.48 82.55 0)
+			(at 62.23 80.645 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -21454,7 +21456,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 30.48 82.55 0)
+			(at 62.23 80.645 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -21464,7 +21466,7 @@
 			)
 		)
 		(property "Description" "test point"
-			(at 30.48 87.63 0)
+			(at 62.23 75.565 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -30061,7 +30063,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "MMC5633NJL"
+		(property "Value" "MMC5603NJL"
 			(at 151.765 190.4999 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -30106,7 +30108,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C3716174"
+		(property "LCSC" "C404328"
 			(at 160.02 200.66 0)
 			(hide yes)
 			(show_name no)

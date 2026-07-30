@@ -20,14 +20,24 @@ void fusion_update(const float accel[3], const float gyro[3], const float mag[3]
                    float dt,
                    float *roll, float *pitch, float *yaw, float *heading)
 {
-    /* Roll/pitch from gravity vector. */
-    float ax = accel[0], ay = accel[1], az = accel[2];
-    float acc_roll  = atan2f(ay, az) * RAD2DEG;
-    float acc_pitch = atan2f(-ax, sqrtf(ay * ay + az * az)) * RAD2DEG;
+    /* The board is mounted upside-down (180° roll about the forward axis, which
+     * is sensor Y since roll fuses gyro[1]). That rotation negates sensor X and
+     * Z; applying the same negation here brings the readings back to an
+     * upright-equivalent frame. It's a proper rotation, so axis directions are
+     * preserved. */
+    float ax = -accel[0], ay = accel[1], az = -accel[2];
+    float gx = -gyro[0],  gy = gyro[1];
+
+    /* Roll/pitch from gravity vector. The IMU's X and Y axes are transposed
+     * relative to the airframe, so roll comes from the X-gravity component
+     * (gyro Y) and pitch from the Y/Z components (gyro X) — swapped from the
+     * textbook mapping to match the physical mounting. */
+    float acc_roll  = atan2f(-ax, sqrtf(ay * ay + az * az)) * RAD2DEG;
+    float acc_pitch = atan2f(ay, az) * RAD2DEG;
 
     /* Integrate gyro (deg/s) then blend toward the accel reference. */
-    s_roll  = ALPHA * (s_roll  + gyro[0] * dt) + (1.0f - ALPHA) * acc_roll;
-    s_pitch = ALPHA * (s_pitch + gyro[1] * dt) + (1.0f - ALPHA) * acc_pitch;
+    s_roll  = ALPHA * (s_roll  + gy * dt) + (1.0f - ALPHA) * acc_roll;
+    s_pitch = ALPHA * (s_pitch + gx * dt) + (1.0f - ALPHA) * acc_pitch;
 
     /* Heading: raw atan2 of the horizontal magnetometer components.
      * Tilt compensation is deferred (see instructions). */

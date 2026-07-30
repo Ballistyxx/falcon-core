@@ -18,6 +18,10 @@ static const char *TAG = "battery";
 #define BATT_FULL_V  4.2f
 #define BATT_EMPTY_V 3.0f
 
+/* Supersample the ADC per reading to average out noise and gain sub-mV
+ * effective resolution (each sample is converted to mV, then averaged). */
+#define BATT_SAMPLES 64
+
 static adc_oneshot_unit_handle_t s_adc;
 static adc_cali_handle_t s_cali;
 static bool s_cali_ok;
@@ -48,22 +52,31 @@ void battery_init(void)
 
 void battery_read(float *voltage, uint8_t *percent)
 {
-    int raw = 0;
-    if (adc_oneshot_read(s_adc, BATT_ADC_CHANNEL, &raw) != ESP_OK) {
+    double mv_sum = 0.0;
+    int good = 0;
+    for (int i = 0; i < BATT_SAMPLES; i++) {
+        int raw = 0;
+        if (adc_oneshot_read(s_adc, BATT_ADC_CHANNEL, &raw) != ESP_OK) {
+            continue;
+        }
+        int mv = 0;
+        if (s_cali_ok) {
+            adc_cali_raw_to_voltage(s_cali, raw, &mv);
+        } else {
+            /* Fallback: assume 12-bit full scale ~3.1 V at 12 dB. */
+            mv = (int)((raw / 4095.0f) * 3100.0f);
+        }
+        mv_sum += mv;
+        good++;
+    }
+
+    if (good == 0) {
         *voltage = 0.0f;
         *percent = 0;
         return;
     }
 
-    int mv = 0;
-    if (s_cali_ok) {
-        adc_cali_raw_to_voltage(s_cali, raw, &mv);
-    } else {
-        /* Fallback: assume 12-bit full scale ~3.1 V at 12 dB. */
-        mv = (int)((raw / 4095.0f) * 3100.0f);
-    }
-
-    float v = (mv / 1000.0f) * BATT_DIVIDER_RATIO;
+    float v = ((float)(mv_sum / good) / 1000.0f) * BATT_DIVIDER_RATIO;
 
     float pct = (v - BATT_EMPTY_V) / (BATT_FULL_V - BATT_EMPTY_V) * 100.0f;
     if (pct < 0.0f) pct = 0.0f;

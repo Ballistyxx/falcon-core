@@ -135,7 +135,7 @@ static void telemetry_task(void *arg)  /* core 0, 20 Hz */
             "\"magcal\":{\"ox\":%.2f,\"oy\":%.2f,\"oz\":%.2f,"
             "\"sx\":%.4f,\"sy\":%.4f,\"sz\":%.4f},"
             "\"tof\":{\"distance_mm\":%u,\"grid\":%s},"
-            "\"battery\":{\"voltage\":%.2f,\"percent\":%u},"
+            "\"battery\":{\"voltage\":%.3f,\"percent\":%u},"
             "\"wifi\":{\"rssi\":%d},"
             "\"attitude\":{\"roll\":%.1f,\"pitch\":%.1f,\"yaw\":%.1f},"
             "\"motors\":{\"m1\":%.2f,\"m2\":%.2f,\"m3\":%.2f,\"m4\":%.2f}}",
@@ -194,8 +194,7 @@ void app_main(void)
 
     wifi_init_sta();
     if (wifi_wait_connected(30000)) {
-        ESP_LOGI(TAG, "WiFi up. Dashboard: point at ws://%s/ws and "
-                      "http://%s/stream", wifi_ip_str(), wifi_ip_str());
+        ESP_LOGI(TAG, "WiFi up. Dashboard: http://%s/", wifi_ip_str());
         led_set_mode(LED_RUNNING);
     } else {
         ESP_LOGE(TAG, "WiFi connect timeout; continuing, will keep retrying");

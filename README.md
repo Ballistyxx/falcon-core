@@ -49,14 +49,14 @@ Sponsored by [PCBWay](https://www.pcbway.com/).
 | 9, 10, 11, 12, 13, 14, 21, 40 | OV2640 DVP data bus (D8, D7, D6, D2, D5, D3, D4, D9) |
 | 15 | M4_IN1 |
 | 16 | M4_IN2 |
-| 17 | M1_IN1 |
+| 17 | M2_IN2 |
 | 19, 20 | USB D−/D+ |
 | 38 | Camera PCLK |
 | 39 | Camera XCLK |
 | 41 | HREF |
 | 42 | VSYNC |
 | 43, 44 | UART0 debug |
-| 47 | M2_IN2 |
+| 47 | M1_IN1 |
 | 48 | Red LED (1kΩ to GND) |
 
 Camera PWDN tied to GND, RESETB tied to 3.3V.

@@ -12,6 +12,7 @@ idf_component_register(
         "camera.c"
         "server.c"
     INCLUDE_DIRS "."
+    EMBED_TXTFILES "../../dashboard/index.html"
     REQUIRES
         esp_driver_i2c
         esp_driver_ledc

@@ -13,7 +13,13 @@
 
 static const char *TAG = "server";
 
-static httpd_handle_t s_httpd;
+/* Dashboard HTML embedded at build time (see main/CMakeLists.txt EMBED_TXTFILES).
+ * Served over plain HTTP from the board so there's no HTTPS mixed-content
+ * upgrade on the ws:// and http:// stream sub-resources. */
+extern const char index_html_start[] asm("_binary_index_html_start");
+
+static httpd_handle_t s_httpd;          /* control + telemetry, port 80 */
+static httpd_handle_t s_stream_httpd;   /* MJPEG stream, port 81 */
 
 /* Connected WebSocket client sockets. */
 #define MAX_WS_CLIENTS 4
@@ -61,6 +67,13 @@ static esp_err_t stream_handler(httpd_req_t *req)
         }
     }
     return res;
+}
+
+/* ---- Dashboard page ----------------------------------------------------- */
+static esp_err_t root_handler(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
+    return httpd_resp_send(req, index_html_start, HTTPD_RESP_USE_STRLEN);
 }
 
 /* ---- WebSocket ---------------------------------------------------------- */
@@ -242,6 +255,7 @@ esp_err_t server_start(void)
         s_ws_fds[i] = -1;
     }
 
+    /* Main control/telemetry server (port 80). */
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.max_open_sockets = 7;
     config.lru_purge_enable = true;
@@ -254,18 +268,42 @@ esp_err_t server_start(void)
         return err;
     }
 
-    httpd_uri_t stream_uri = {
-        .uri = "/stream", .method = HTTP_GET,
-        .handler = stream_handler, .user_ctx = NULL,
+    httpd_uri_t root_uri = {
+        .uri = "/", .method = HTTP_GET,
+        .handler = root_handler, .user_ctx = NULL,
     };
     httpd_uri_t ws_uri = {
         .uri = "/ws", .method = HTTP_GET,
         .handler = ws_handler, .user_ctx = NULL,
         .is_websocket = true,
     };
-    httpd_register_uri_handler(s_httpd, &stream_uri);
+    httpd_register_uri_handler(s_httpd, &root_uri);
     httpd_register_uri_handler(s_httpd, &ws_uri);
 
-    ESP_LOGI(TAG, "server started (/stream, /ws)");
+    /* The MJPEG stream handler runs an infinite loop that never returns, which
+     * blocks esp_http_server's single handler task and starves the WebSocket.
+     * Give it its own server instance on port 81 (with a distinct control
+     * port) so video and telemetry run independently — the same split the
+     * espressif camera web-server example uses. */
+    httpd_config_t scfg = HTTPD_DEFAULT_CONFIG();
+    scfg.server_port = 81;
+    scfg.ctrl_port = config.ctrl_port + 1;
+    scfg.max_open_sockets = 3;
+    scfg.lru_purge_enable = true;
+    scfg.stack_size = 8192;
+    scfg.core_id = tskNO_AFFINITY;
+
+    err = httpd_start(&s_stream_httpd, &scfg);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "stream server start failed: 0x%x (video disabled)", err);
+    } else {
+        httpd_uri_t stream_uri = {
+            .uri = "/stream", .method = HTTP_GET,
+            .handler = stream_handler, .user_ctx = NULL,
+        };
+        httpd_register_uri_handler(s_stream_httpd, &stream_uri);
+    }
+
+    ESP_LOGI(TAG, "servers started (:80 /ws, :81 /stream)");
     return ESP_OK;
 }

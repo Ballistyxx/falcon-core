@@ -1,13 +1,18 @@
 /*
  * Motor control: 4x DRV8212P H-bridges driven by LEDC PWM at 20 kHz.
  *
- * Each motor has two pins (IN1, IN2):
- *   cmd > 0 : IN1 = PWM(|cmd|), IN2 = LOW   (forward)
- *   cmd < 0 : IN1 = LOW,        IN2 = PWM   (reverse)
- *   cmd = 0 : IN1 = LOW,        IN2 = LOW   (coast)
+ * Each driver uses a single PWM channel plus a direction GPIO, so it stays at
+ * one LEDC channel per motor (4 total) — leaving channels free for the camera
+ * XCLK so motors and camera run simultaneously — while still giving full
+ * bidirectional control:
  *
- * Commands are floats in [-1, 1]. The applied duty is |cmd| scaled by a
- * configurable safety cap (MOTOR_MAX_DUTY_FRAC).
+ *   cmd > 0 (CW):  IN2 = LOW,  IN1 = PWM(duty)      fast-decay forward
+ *   cmd < 0 (CCW): IN2 = HIGH, IN1 = PWM(1 - duty)  drive on IN1-low; reverse
+ *   cmd = 0:       IN2 = LOW,  IN1 = 0              coast
+ *
+ * The (1 - duty) term in reverse makes the average output voltage symmetric
+ * with forward for the same |cmd|. Commands are floats in [-1, 1]; magnitude is
+ * scaled by a configurable safety cap (MOTOR_MAX_DUTY_FRAC).
  */
 
 #ifndef FALCON_MOTORS_H_
@@ -15,7 +20,8 @@
 
 #define MOTOR_COUNT 4
 
-/* Configure LEDC timer + 8 channels. */
+/* Configure the LEDC timer + one PWM channel per motor and the IN2 direction
+ * GPIOs. */
 void motors_init(void);
 
 /*

@@ -156,7 +156,10 @@
       <img id="stream" alt="" />
       <div class="cam-msg" id="camMsg">no video</div>
     </div>
-    <div style="margin-top:8px"><button class="ghost" id="reloadCam">Reload Stream</button></div>
+    <div style="margin-top:8px">
+      <button class="ghost" id="toggleCam">Pause</button>
+      <button class="ghost" id="reloadCam">Reload Stream</button>
+    </div>
   </section>
 
   <section class="panel" id="instruments">
@@ -224,17 +227,22 @@
 
     <section class="panel">
       <h2>Motor Outputs</h2>
+      <div class="motorbar" style="margin-bottom:10px">
+        <span class="lbl">power</span>
+        <input type="range" id="power" min="0" max="1" step="0.01" value="0.4" style="width:100%">
+        <span id="powerVal" style="text-align:right">0.40</span>
+      </div>
       <div id="motors"></div>
     </section>
 
     <section class="panel legend">
       <h2>Controls</h2>
-      <div class="key" data-k="w"><kbd>W</kbd> forward</div>
-      <div class="key" data-k="s"><kbd>S</kbd> backward</div>
-      <div class="key" data-k="a"><kbd>A</kbd> yaw left</div>
-      <div class="key" data-k="d"><kbd>D</kbd> yaw right</div>
-      <div class="key" data-k="e"><kbd>E</kbd> ascend</div>
-      <div class="key" data-k="q"><kbd>Q</kbd> descend</div>
+      <div class="key" data-k="w"><kbd>W</kbd> M1+M3 CW</div>
+      <div class="key" data-k="s"><kbd>S</kbd> M1+M3 CCW</div>
+      <div class="key" data-k="a"><kbd>A</kbd> M1 CCW · M3 CW</div>
+      <div class="key" data-k="d"><kbd>D</kbd> M1 CW · M3 CCW</div>
+      <div class="key" data-k="q"><kbd>Q</kbd> M2+M4 CW</div>
+      <div class="key" data-k="e"><kbd>E</kbd> M2+M4 CCW</div>
       <div id="staleMsg"></div>
     </section>
   </aside>
@@ -304,13 +312,17 @@
 "use strict";
 
 // ---- Config ----------------------------------------------------------------
-const THROTTLE = 0.4;        // fixed key throttle magnitude
+let THROTTLE = 0.4;          // key throttle magnitude, set by the power slider
 const CMD_HZ = 10;           // command send rate while keys held
 const STALE_MS = 2000;       // telemetry stale threshold
 
 // ---- Connection state ------------------------------------------------------
 let ws = null;
-let ip = localStorage.getItem("falconIp") || location.hostname || "192.168.12.104";
+// When the dashboard is served from the board itself, location.hostname is the
+// board's IP — use it so the WS/stream target is correct with no typing.
+// Falls back to the saved IP (e.g. when opened as a local file).
+const _hostIp = (location.hostname && location.hostname !== "localhost") ? location.hostname : "";
+let ip = _hostIp || localStorage.getItem("falconIp") || "192.168.12.104";
 let reconnectTimer = null;
 let lastTelemetry = 0;
 let latest = null;           // most recent telemetry payload (rendered via rAF)
@@ -323,14 +335,19 @@ function setStatus(state, text) {
   $("statusText").textContent = text;
 }
 
+// Full (re)connect from the UI: pin the IP, then (re)start video + WS.
 function connect() {
   ip = $("ip").value.trim();
   localStorage.setItem("falconIp", ip);
-  if (ws) { try { ws.close(); } catch (e) {} ws = null; }
+  setStream();
+  connectWs();
+}
 
+// WebSocket telemetry link. Kept separate from the video so a flaky WS (poor
+// signal → frequent reconnects) doesn't keep tearing down the MJPEG stream.
+function connectWs() {
+  if (ws) { try { ws.close(); } catch (e) {} ws = null; }
   setStatus("reconnecting", "connecting…");
-  // (Re)point the MJPEG stream.
-  $("stream").src = "http://" + ip + "/stream?ts=" + Date.now();
 
   try {
     ws = new WebSocket("ws://" + ip + "/ws");
@@ -357,15 +374,49 @@ function connect() {
   };
 }
 
+// (Re)point the MJPEG stream. Independent of the WS lifecycle. The stream is
+// served by a separate HTTP server on port 81 so its blocking handler can't
+// starve the telemetry WebSocket on port 80.
+let streamPaused = false;
+function setStream() {
+  if (streamPaused) return;
+  $("camMsg").textContent = "connecting to video…";
+  $("camMsg").style.display = "block";
+  $("stream").src = "http://" + ip + ":81/stream?ts=" + Date.now();
+}
+
+// Pause closes the MJPEG connection to save bandwidth; resume reopens it.
+function pauseStream() {
+  $("stream").removeAttribute("src");   // drops the TCP connection to the board
+  $("camMsg").textContent = "paused";
+  $("camMsg").style.display = "block";
+}
+
 function scheduleReconnect() {
   if (reconnectTimer) return;
-  reconnectTimer = setTimeout(() => { reconnectTimer = null; connect(); }, 3000);
+  // Reconnect only the WS; leave a working video stream untouched.
+  reconnectTimer = setTimeout(() => { reconnectTimer = null; connectWs(); }, 3000);
 }
 
 $("connectBtn").onclick = connect;
-$("reloadCam").onclick = () => { $("stream").src = "http://" + ip + "/stream?ts=" + Date.now(); };
-$("stream").onerror = () => { $("camMsg").style.display = "block"; };
-$("stream").onload  = () => { $("camMsg").style.display = "none"; };
+$("reloadCam").onclick = setStream;
+$("toggleCam").onclick = () => {
+  streamPaused = !streamPaused;
+  $("toggleCam").textContent = streamPaused ? "Resume" : "Pause";
+  if (streamPaused) pauseStream(); else setStream();
+};
+$("stream").onerror = () => {
+  if (streamPaused) return;
+  $("camMsg").textContent = "no video";
+  $("camMsg").style.display = "block";
+};
+$("stream").onload = () => { $("camMsg").style.display = "none"; };
+// MJPEG <img> load/error events are unreliable across browsers, so also hide
+// the overlay whenever the image actually has decoded frame dimensions.
+setInterval(() => {
+  if (streamPaused) return;
+  if ($("stream").naturalWidth > 0) $("camMsg").style.display = "none";
+}, 500);
 
 // ---- Keyboard flight control ----------------------------------------------
 const held = {};
@@ -385,25 +436,36 @@ document.addEventListener("keyup", (e) => {
 });
 window.addEventListener("blur", () => { for (const k of CONTROL_KEYS) held[k] = false; updateLegend(); });
 
+// Power slider: scales the throttle magnitude applied per key (0.0 .. 1.0).
+(() => {
+  const el = $("power"), val = $("powerVal");
+  const saved = parseFloat(localStorage.getItem("falconPower"));
+  if (!isNaN(saved)) { el.value = saved; }
+  const sync = () => { THROTTLE = parseFloat(el.value); val.textContent = THROTTLE.toFixed(2); };
+  el.addEventListener("input", () => { sync(); localStorage.setItem("falconPower", el.value); });
+  sync();
+})();
+
 function updateLegend() {
   document.querySelectorAll(".legend .key").forEach((el) => {
     el.classList.toggle("active", !!held[el.dataset.k]);
   });
 }
 
-// Motor roles (viewed from above, nose forward):
-//   M1 altitude right   M2 forward right
-//   M4 altitude left    M3 forward left
-// Forward/back + yaw mix onto the forward pair (M2 right, M3 left);
-// ascend/descend mix onto the altitude pair (M1 right, M4 left).
+// Motor roles: M1 forward-left, M3 forward-right; M2 vertical-left, M4
+// vertical-right. Commands are bidirectional [-1,1] where + = CW, - = CCW.
+//   W: M1+M3 CW      S: M1+M3 CCW
+//   A: M1 CCW/M3 CW  D: M1 CW/M3 CCW
+//   Q: M2+M4 CW      E: M2+M4 CCW
 function computeMotors() {
   let m1 = 0, m2 = 0, m3 = 0, m4 = 0;
-  if (held.w) { m2 += THROTTLE; m3 += THROTTLE; }   // forward
-  if (held.s) { m2 -= THROTTLE; m3 -= THROTTLE; }   // backward
-  if (held.a) { m2 += THROTTLE; m3 -= THROTTLE; }   // yaw left  (right fwd, left rev)
-  if (held.d) { m2 -= THROTTLE; m3 += THROTTLE; }   // yaw right (right rev, left fwd)
-  if (held.e) { m1 += THROTTLE; m4 += THROTTLE; }   // ascend
-  if (held.q) { m1 -= THROTTLE; m4 -= THROTTLE; }   // descend
+  const T = THROTTLE;
+  if (held.w) { m1 += T; m3 += T; }   // forward props CW
+  if (held.s) { m1 -= T; m3 -= T; }   // forward props CCW
+  if (held.a) { m1 -= T; m3 += T; }   // M1 CCW, M3 CW
+  if (held.d) { m1 += T; m3 -= T; }   // M1 CW,  M3 CCW
+  if (held.q) { m2 += T; m4 += T; }   // vertical props CW
+  if (held.e) { m2 -= T; m4 -= T; }   // vertical props CCW
   const clamp = (v) => Math.max(-1, Math.min(1, v));
   return { m1: clamp(m1), m2: clamp(m2), m3: clamp(m3), m4: clamp(m4) };
 }
@@ -492,7 +554,7 @@ function render() {
     $("pitchVal").textContent = pitch.toFixed(1);
     // Power & altitude
     const v = t.battery?.voltage ?? 0, pct = t.battery?.percent ?? 0;
-    $("vVal").textContent = v.toFixed(2);
+    $("vVal").textContent = v.toFixed(3);
     $("pctVal").textContent = pct;
     const bar = $("battBar");
     bar.style.width = pct + "%";
@@ -527,7 +589,7 @@ function render() {
   requestAnimationFrame(render);
 }
 
-const MOTOR_LABELS = { 1: "M1 alt R", 2: "M2 fwd R", 3: "M3 fwd L", 4: "M4 alt L" };
+const MOTOR_LABELS = { 1: "M1 fwd L", 2: "M2 vrt L", 3: "M3 fwd R", 4: "M4 vrt R" };
 function buildMotors() {
   const box = $("motors");
   box.innerHTML = "";
@@ -542,8 +604,9 @@ function buildMotors() {
   }
 }
 function renderMotors(m) {
+  // Bidirectional: fill from center. CW (+) grows right/green, CCW (-) left/amber.
   for (let i = 1; i <= 4; i++) {
-    const v = m["m" + i] ?? 0;
+    const v = Math.max(-1, Math.min(1, m["m" + i] ?? 0));
     const fill = $("mfill" + i);
     const pct = Math.abs(v) * 50;
     if (v >= 0) { fill.style.left = "50%"; fill.style.width = pct + "%"; fill.style.background = "var(--good)"; }
