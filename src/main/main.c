@@ -83,7 +83,7 @@ static void tof_task(void *arg)      /* core 0, 10 Hz */
     TickType_t last = xTaskGetTickCount();
     while (1) {
         uint16_t mm;
-        uint16_t grid[16];
+        uint16_t grid[TOF_GRID_ZONES];
         if (sensors_read_tof(&mm, grid)) {
             state_set_tof(mm, grid);
         }
@@ -107,7 +107,7 @@ static void battery_task(void *arg)  /* core 0, 1 Hz */
 static void telemetry_task(void *arg)  /* core 0, 20 Hz */
 {
     (void)arg;
-    static char json[900];
+    static char json[1400];
     TickType_t last = xTaskGetTickCount();
     while (1) {
         falcon_state_t s;
@@ -116,11 +116,12 @@ static void telemetry_task(void *arg)  /* core 0, 20 Hz */
         magcal_get(&mc);
         uint32_t ts = (uint32_t)(esp_timer_get_time() / 1000);
 
-        /* Flatten the 4x4 ToF grid into a JSON array (row-major, mm). */
-        char grid_str[112];
+        /* Flatten the 8x8 ToF grid into a JSON array (row-major, mm).
+         * 64 zones × up to 5 chars ("4000,") plus brackets and NUL. */
+        char grid_str[352];
         int gp = 0;
         grid_str[gp++] = '[';
-        for (int i = 0; i < 16; i++) {
+        for (int i = 0; i < TOF_GRID_ZONES; i++) {
             gp += snprintf(grid_str + gp, sizeof(grid_str) - gp,
                            "%s%u", i ? "," : "", s.tof_grid[i]);
         }

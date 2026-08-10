@@ -140,12 +140,12 @@
   .cal-count { font-size: 20px; color: var(--accent); }
 
   .tof-wrap { display: flex; flex-direction: column; gap: 10px; }
-  .tof-svg { width: 100%; height: auto; display: block; border-radius: 6px; }
-  .tof-cell { transition: fill .18s ease; }
-  .tof-txt {
-    font-family: var(--mono); font-size: 13px; font-weight: 600;
-    pointer-events: none; dominant-baseline: central; text-anchor: middle;
-  }
+  .tof-svg { width: 100%; height: auto; display: block; border-radius: 6px; aspect-ratio: 1 / 1; }
+  #tofCanvas { image-rendering: auto; background: #0d1117; }
+  .tof-ctrls { display: flex; gap: 12px; }
+  .tof-ctrls label { flex: 1; display: flex; flex-direction: column; gap: 3px;
+    color: var(--muted); font-size: 11px; }
+  .tof-ctrls input[type=range] { width: 100%; }
   .tof-legend { display: flex; align-items: center; gap: 8px; }
   .tof-legend .grad { flex: 1; height: 10px; border-radius: 5px; border: 1px solid var(--edge); }
   .tof-legend span { color: var(--muted); font-size: 11px; white-space: nowrap; }
@@ -208,9 +208,9 @@
     </section>
 
     <section class="panel">
-      <h2>ToF Depth Field — 4×4 (cm)</h2>
+      <h2>ToF Depth Field — 8×8 (cm)</h2>
       <div class="tof-wrap">
-        <svg id="tofGrid" class="tof-svg" viewBox="0 0 200 200"></svg>
+        <canvas id="tofCanvas" class="tof-svg" width="256" height="256"></canvas>
         <div class="tof-legend">
           <span id="tofNear">near</span>
           <div class="grad" id="tofGrad"></div>
@@ -220,6 +220,10 @@
           <span>nearest <b id="tofMin">--</b></span>
           <span>center <b id="tofCtr">--</b></span>
           <span>farthest <b id="tofMax">--</b></span>
+        </div>
+        <div class="tof-ctrls">
+          <label>smoothing<input id="tofSigS" type="range" min="0.3" max="2.5" step="0.1" value="0.9"></label>
+          <label>edge keep<input id="tofSigR" type="range" min="40" max="1200" step="20" value="250"></label>
         </div>
       </div>
     </section>
@@ -937,9 +941,10 @@ function renderMotors(m) {
 // live depth map: a near→far colormap with per-zone distances in cm, the
 // center zone (which feeds altitude) ringed, and a fixed color range so the
 // colors keep a consistent meaning frame to frame.
-const TOF_N = 4;                 // 4x4 grid
-const TOF_CENTER = 5;            // center zone = altitude source (matches firmware)
+const TOF_N = 8;                 // 8x8 grid
+const TOF_CENTER = 27;           // center zone = altitude source (matches firmware)
 const TOF_MAX_MM = 2000;         // color-scale ceiling; beyond reads as "far"
+const TOF_RES = 64;              // bilateral-upsample output resolution (px/side)
 
 // Near→far color stops (RGB). Warm = close, cool = distant.
 const TOF_STOPS = [
@@ -950,44 +955,28 @@ const TOF_STOPS = [
   [1.00, [31, 111, 235]],  // deep blue — far away
 ];
 
-function tofColor(t) {
+// Colormap → [r,g,b]. tofColor() wraps it for CSS strings (legend gradient).
+function tofRGB(t) {
   t = Math.max(0, Math.min(1, t));
   for (let i = 1; i < TOF_STOPS.length; i++) {
     const [t0, c0] = TOF_STOPS[i - 1];
     const [t1, c1] = TOF_STOPS[i];
     if (t <= t1) {
       const f = (t - t0) / ((t1 - t0) || 1);
-      const c = [0, 1, 2].map((j) => Math.round(c0[j] + (c1[j] - c0[j]) * f));
-      return `rgb(${c[0]},${c[1]},${c[2]})`;
+      return [0, 1, 2].map((j) => Math.round(c0[j] + (c1[j] - c0[j]) * f));
     }
   }
-  return `rgb(31,111,235)`;
+  return [31, 111, 235];
 }
+function tofColor(t) { const c = tofRGB(t); return `rgb(${c[0]},${c[1]},${c[2]})`; }
 
+// Offscreen buffer we range-weighted-upsample into, then scale up smoothly.
+let tofOff, tofOffCtx, tofImg;
 function buildTof() {
-  const svg = $("tofGrid");
-  const pad = 4, gap = 4;
-  const cell = (200 - pad * 2 - gap * (TOF_N - 1)) / TOF_N;
-  let html = "";
-  for (let r = 0; r < TOF_N; r++) {
-    for (let c = 0; c < TOF_N; c++) {
-      const z = r * TOF_N + c;
-      const x = pad + c * (cell + gap), y = pad + r * (cell + gap);
-      html +=
-        `<rect class="tof-cell" id="tofc${z}" x="${x}" y="${y}"
-           width="${cell}" height="${cell}" rx="6"
-           fill="#161b22" stroke="#30363d"><title>zone ${z}</title></rect>
-         <text class="tof-txt" id="toft${z}" x="${x + cell / 2}"
-           y="${y + cell / 2}" fill="#8b949e">–</text>`;
-    }
-  }
-  // Ring the center zone so it's clear which cell drives the altitude readout.
-  const cr = Math.floor(TOF_CENTER / TOF_N), cc = TOF_CENTER % TOF_N;
-  const rx = pad + cc * (cell + gap), ry = pad + cr * (cell + gap);
-  html +=
-    `<rect x="${rx}" y="${ry}" width="${cell}" height="${cell}" rx="6"
-       fill="none" stroke="#c9d1d9" stroke-width="2" pointer-events="none"/>`;
-  svg.innerHTML = html;
+  tofOff = document.createElement("canvas");
+  tofOff.width = TOF_RES; tofOff.height = TOF_RES;
+  tofOffCtx = tofOff.getContext("2d");
+  tofImg = tofOffCtx.createImageData(TOF_RES, TOF_RES);
 
   // Legend gradient mirrors the colormap; label the fixed range endpoints.
   $("tofGrad").style.background =
@@ -997,27 +986,84 @@ function buildTof() {
   $("tofFar").textContent = (TOF_MAX_MM / 10).toFixed(0) + "+ cm";
 }
 
+// Range-weighted (bilateral) upsampling of the sparse 8×8 depth grid into a
+// smooth continuous field. For each output pixel we gather the nearby source
+// zones weighted by BOTH spatial distance (σ_s, in cells) and depth similarity
+// to the nearest valid sample (σ_r, in mm). The spatial term smooths; the range
+// term keeps a near object from smearing into the far background (edge-keep),
+// and invalid zones (0 = no return) contribute nothing, so holes fill from good
+// neighbours. Done entirely client-side — the firmware just ships the 64 zones.
 function renderTof(grid) {
-  if (!Array.isArray(grid) || grid.length < 16) return;
+  const N = TOF_N;
+  if (!Array.isArray(grid) || grid.length < N * N) return;
+
+  const sigS = parseFloat($("tofSigS").value);   // spatial, source cells
+  const sigR = parseFloat($("tofSigR").value);   // range, mm
+  const invS2 = 1 / (2 * sigS * sigS);
+  const invR2 = 1 / (2 * sigR * sigR);
+  const spatCut = (3 * sigS) * (3 * sigS);       // skip taps past ~3σ spatially
+
+  // Stats over valid zones.
   let mn = Infinity, mx = -Infinity;
-  for (const d of grid) {
-    if (d > 0) { if (d < mn) mn = d; if (d > mx) mx = d; }
-  }
-  for (let z = 0; z < 16; z++) {
-    const d = grid[z] || 0;
-    const cell = $("tofc" + z), txt = $("toft" + z);
-    if (!cell || !txt) continue;
-    if (d <= 0) {                       // no valid return in this zone
-      cell.setAttribute("fill", "#161b22");
-      txt.textContent = "–";
-      txt.setAttribute("fill", "#8b949e");
-      continue;
+  for (const d of grid) { if (d > 0) { if (d < mn) mn = d; if (d > mx) mx = d; } }
+
+  const data = tofImg.data, RES = TOF_RES;
+  for (let py = 0; py < RES; py++) {
+    const sy = (py + 0.5) / RES * N - 0.5;       // output row → source-cell y
+    for (let px = 0; px < RES; px++) {
+      const sx = (px + 0.5) / RES * N - 0.5;
+      const o = (py * RES + px) * 4;
+
+      // d_ref = depth of the nearest valid source cell (edge reference).
+      let dref = 0, best = Infinity;
+      for (let ry = 0; ry < N; ry++) {
+        const dy = sy - ry;
+        for (let rx = 0; rx < N; rx++) {
+          const d = grid[ry * N + rx];
+          if (d <= 0) continue;
+          const dx = sx - rx, dist = dx * dx + dy * dy;
+          if (dist < best) { best = dist; dref = d; }
+        }
+      }
+      if (dref === 0) {                            // no valid data anywhere
+        data[o] = 13; data[o + 1] = 17; data[o + 2] = 23; data[o + 3] = 255;
+        continue;
+      }
+
+      // Bilateral gather.
+      let wsum = 0, dsum = 0;
+      for (let ry = 0; ry < N; ry++) {
+        const dy = sy - ry;
+        for (let rx = 0; rx < N; rx++) {
+          const d = grid[ry * N + rx];
+          if (d <= 0) continue;
+          const dx = sx - rx, sp = dx * dx + dy * dy;
+          if (sp > spatCut) continue;
+          const sd = d - dref;
+          const w = Math.exp(-sp * invS2 - sd * sd * invR2);
+          wsum += w; dsum += w * d;
+        }
+      }
+      const c = tofRGB((dsum / wsum) / TOF_MAX_MM);
+      data[o] = c[0]; data[o + 1] = c[1]; data[o + 2] = c[2]; data[o + 3] = 255;
     }
-    const t = d / TOF_MAX_MM;
-    cell.setAttribute("fill", tofColor(t));
-    txt.textContent = Math.round(d / 10);            // mm → cm
-    txt.setAttribute("fill", t > 0.6 ? "#e6edf3" : "#0d1117");  // keep contrast
   }
+  tofOffCtx.putImageData(tofImg, 0, 0);
+
+  // Scale up smoothly onto the visible canvas (bilinear on top of the bilateral
+  // field), then mark the centre zone that drives the altitude readout.
+  const cv = $("tofCanvas"), ctx = cv.getContext("2d");
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  ctx.drawImage(tofOff, 0, 0, cv.width, cv.height);
+
+  const cr = Math.floor(TOF_CENTER / N), cc = TOF_CENTER % N;
+  const cw = cv.width / N, ch = cv.height / N;
+  ctx.strokeStyle = "rgba(201,209,217,0.9)";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(cc * cw, cr * ch, cw, ch);
+
   const cm = (v) => (v / 10).toFixed(0) + " cm";
   $("tofMin").textContent = isFinite(mn) ? cm(mn) : "--";
   $("tofMax").textContent = isFinite(mx) ? cm(mx) : "--";

@@ -12,6 +12,7 @@
 #define FALCON_STATE_H_
 
 #include <stdint.h>
+#include "sensors.h"   /* TOF_GRID_ZONES */
 
 typedef struct {
     /* Sensor data (written by sensor_task) */
@@ -23,10 +24,10 @@ typedef struct {
     float roll, pitch, yaw;
     float heading_deg;
 
-    /* ToF (written by tof_task): center-zone altitude plus the full 4x4 depth
+    /* ToF (written by tof_task): center-zone altitude plus the full 8x8 depth
      * grid (mm, row-major; 0 = no valid return in that zone). */
     uint16_t altitude_mm;
-    uint16_t tof_grid[16];
+    uint16_t tof_grid[TOF_GRID_ZONES];
 
     /* Battery (written by battery_task) */
     float battery_voltage;
@@ -49,7 +50,7 @@ void state_snapshot(falcon_state_t *out);
 void state_set_imu(const float accel[3], const float gyro[3]);
 void state_set_mag(const float mag[3]);
 void state_set_attitude(float roll, float pitch, float yaw, float heading_deg);
-void state_set_tof(uint16_t altitude_mm, const uint16_t grid[16]);
+void state_set_tof(uint16_t altitude_mm, const uint16_t grid[TOF_GRID_ZONES]);
 void state_set_battery(float voltage, uint8_t percent);
 void state_set_motor_output(const float output[4]);
 

@@ -48,7 +48,7 @@ void state_set_attitude(float roll, float pitch, float yaw, float heading_deg)
     UNLOCK();
 }
 
-void state_set_tof(uint16_t altitude_mm, const uint16_t grid[16])
+void state_set_tof(uint16_t altitude_mm, const uint16_t grid[TOF_GRID_ZONES])
 {
     LOCK();
     s_state.altitude_mm = altitude_mm;

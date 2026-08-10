@@ -204,8 +204,9 @@ bool sensors_read_mag(float mag[3])
 
 /* ---- VL53L5CX ----------------------------------------------------------- */
 static VL53L5CX_Configuration s_tof;
-/* Center zone index for a 4x4 grid (zones 0..15, row-major). */
-#define TOF_CENTER_ZONE 5
+/* Center zone index for an 8x8 grid (zones 0..63, row-major). The true center
+ * falls between 27/28/35/36; 27 (row 3, col 3) is the conventional pick. */
+#define TOF_CENTER_ZONE 27
 
 static esp_err_t vl53_setup(void)
 {
@@ -222,11 +223,12 @@ static esp_err_t vl53_setup(void)
         ESP_LOGE(TAG, "vl53l5cx_init failed");
         return ESP_FAIL;
     }
-    vl53l5cx_set_resolution(&s_tof, VL53L5CX_RESOLUTION_4X4);
+    /* 8x8 caps at 15 Hz (4x4 goes to 60); 10 Hz leaves ample margin. */
+    vl53l5cx_set_resolution(&s_tof, VL53L5CX_RESOLUTION_8X8);
     vl53l5cx_set_ranging_frequency_hz(&s_tof, 10);
     vl53l5cx_start_ranging(&s_tof);
 
-    ESP_LOGI(TAG, "VL53L5CX ranging (4x4 @ 10Hz)");
+    ESP_LOGI(TAG, "VL53L5CX ranging (8x8 @ 10Hz)");
     return ESP_OK;
 }
 

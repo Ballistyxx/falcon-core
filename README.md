@@ -1,11 +1,13 @@
 # Falcon Core
 
-<table>
+<img src="photos/thumbnail.webp" alt="Side-by-side images of the Falcon Core board" />
+
+<!-- <table>
   <tr>
     <td><img src="photos/bottom-isometric-chassis.png" alt="Bottom isometric chassis" width="400"></td>
     <td><img src="photos/front-chassis.png" alt="Front chassis" width="400"></td>
   </tr>
-</table>
+</table> -->
 
 A custom standalone ESP32-S3 flight controller for an indoor autonomous blimp. Successor to [Falcon Flight](https://github.com/PHS-SMCS/falcon-flight), redesigned from a Raspberry Pi Zero 2W HAT into a purpose-built 32×46mm 4-layer PCB.
 
@@ -22,7 +24,7 @@ Sponsored by [PCBWay](https://www.pcbway.com/).
 - **Battery Sensing:** Internal ADC (GPIO7)
 - **Status LED:** Programmable red LED (GPIO48)
 - **Board:** 32×46mm, 4-layer, matte black solder mask
-- **Weight:** ~11.5–13g (excluding battery and camera module)
+- **Weight:** only 11 grams (excluding battery)
 
 ## Power
 
